@@ -15,31 +15,13 @@ Built a customer segmentation model using RFM (Recency, Frequency, Monetary) ana
 
 The original pandas-based RFM pipeline was rebuilt as SQL queries (joins, aggregate functions, a reference-date CTE) and cross-checked against the original results across all 95,420 customers. This surfaced two real data quality issues:
 
-- **Recency reference date was biased by an implicit inner join.** The original pipeline computed the most recent order date from a merged, inner-joined dataset, which silently dropped orders with no matching line items — inflating every customer's Recency by a constant ~44-day offset.
-- **Frequency was inflated for multi-item orders.** The original calculation counted line items, not distinct orders, overstating how often customers actually purchased.
+**Recency reference date was wrong, and here is how it was fixed.** Recency is measured as days since a customer's last order, relative to a single reference date representing "today" (the most recent point in the dataset). The original pipeline computed that reference date from a merged, inner-joined dataset (orders joined to order items), which silently dropped any order with no matching line items. The most recent orders in the full dataset happened to be among those dropped, so the reference date came out ~44 days earlier than it should have been, inflating every customer's Recency by that same constant offset. The fix was to compute the reference date from the complete `orders` table directly, rather than from the inner-joined subset.
+
+**Frequency was inflated for multi-item orders, and here is why.** The original calculation counted rows in the joined (orders × order_items) table. Since a single order can contain several line items, a customer who bought 3 items in one order was counted as Frequency = 3 instead of the correct Frequency = 1. The SQL version fixes this with `COUNT(DISTINCT order_id)`, counting distinct orders rather than line items.
+
+**How the corrected figures were verified.** Both fixes were checked systematically across all 95,420 customers, not just spot-checked on one example:
+- The Recency offset introduced by the date bug was consistently close to 44–45 days for every customer (not random noise), confirming it was a systematic bias, not a coincidence.
+- Monetary values matched exactly between the original and corrected pipelines for every customer (maximum difference: £0.00), confirming that part of the original logic was already correct.
+- Frequency only ever decreased or stayed the same after the fix, for every customer — exactly the expected direction for a fix that removes double-counting, and it never increased, which would have indicated a new bug introduced by the fix itself.
 
 Correcting both moved the measured share of one-time buyers from 87.6% to 96.9%.
-
-## 3. K-means Clustering
-
-Applied K-means clustering to the corrected data to uncover data-driven customer groups based on behavioural patterns, beyond the original rule-based segments.
-
-## 4. GenAI Layer
-
-Used the Anthropic API to generate plain-English, stakeholder-facing summaries and retention recommendations for each customer segment from its aggregate statistics — no individual customer data or PII sent to the LLM.
-
-## 5. Responsible AI Review
-
-The LLM's recommendations came out nearly identical across all four segments, despite genuinely different underlying statistics — a real, documented limitation, not a success story. This is why the output is treated as a draft for human review, not an auto-published result: no LLM output here is used to trigger a real business decision without a human checking it first.
-
-## Key Takeaway
-
-Analysed customer behaviour to generate actionable, data-driven recommendations for retention and targeted marketing strategies — while also demonstrating that both the data pipeline and the AI layer need to be checked, not trusted by default.
-
-## Tools
-
-Python, Pandas, NumPy, Scikit-learn, Matplotlib/Seaborn, SQL (SQLite), Anthropic API
-
-## Project History
-
-Originally developed and published on [Kaggle](https://www.kaggle.com/code/siripiruntans/customer-segmentation-project-rfm-analysis). The SQL validation, K-means clustering, GenAI layer and Responsible AI review were added as a second phase of the project, documented in full in the notebook in this repository.
